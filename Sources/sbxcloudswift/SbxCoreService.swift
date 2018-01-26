@@ -25,10 +25,10 @@ public enum JSONError: Error, CustomStringConvertible {
             return "Invalid JSON"
         case let .decodingError(e):
             switch e {
-                case let .valueNotFound(type, context):
-                    return "Value not found => \( context.codingPath.last?.stringValue ?? "" )(\(type)): \n \(context.codingPath)"
-                default:
-                    return e.localizedDescription
+            case let .valueNotFound(type, context):
+                return "Value not found => \(context.codingPath.last?.stringValue ?? "")(\(type)): \n \(context.codingPath)"
+            default:
+                return e.localizedDescription
 
             }
         }
@@ -351,7 +351,8 @@ public final class FindOperation: Find {
                 let objects = try decoder.decode(FindPageResponse<T>.self, from: jsonData)
 
                 return completionHandler(objects, nil)
-
+            } catch let e as DecodingError {
+                completionHandler(nil, .decodingError(e))
             } catch {
                 completionHandler(nil, .error(error))
             }
@@ -386,8 +387,6 @@ public final class FindOperation: Find {
         json["results"] = jsonObjects
 
 
-        print(json)
-
         return try JSONSerialization.data(withJSONObject: json)
     }
 
@@ -421,68 +420,44 @@ public final class FindOperation: Find {
 
     public func loadAll<T: Codable>(completionHandler: @escaping ([T]?, JSONError?) -> ()) {
 
-        let req = core.buildRequest(query: self.query.compile(), params: nil, action: SBXAction.find, method: .POST)
-
-        let strongSelf = self
-
-        session.dataTask(with: req) { (data: Data?, res: URLResponse?, error: Error?) in
+        self.loadPage(page: 1) { [weak self] (pageResponse: FindPageResponse<T>?, error: JSONError?) in
 
 
-            if let e = error {
-                return completionHandler(nil, .error(e))
-            }
+            guard let response = pageResponse, let strongSelf = self else {
 
-            let decoder = JSONDecoder()
+                if let e = error {
+                    return completionHandler(nil, .error(e))
+                }
 
-            guard let d = data else {
-                return completionHandler(nil, .customError("Invalid Response From Server"))
+                return completionHandler(nil, .invalidJSON)
             }
 
 
-            do {
+            if !response.success {
 
-                guard let jsonData = try strongSelf.parseResponse(data: d) else {
-                    return completionHandler(nil, .invalidJSON)
+                if let msg = response.error {
+                    return completionHandler(nil, .customError(msg))
                 }
 
-
-                let response: FindPageResponse<T> = try decoder.decode(FindPageResponse<T>.self, from: jsonData)
-
-
-                if !response.success {
-
-                    if let msg = response.error {
-                        return completionHandler(nil, .customError(msg))
-                    }
-
-                    return completionHandler(nil, .invalidJSON)
-                }
-
-
-                guard let totalPages = response.totalPages, let results = response.results else {
-                    completionHandler(nil, .invalidJSON)
-                    return
-                }
-
-
-                if totalPages > 1 {
-
-                    let r: CountableClosedRange<Int> = 2...totalPages
-
-                    return strongSelf.loadAll(items: results, range: r, completionHandler: completionHandler)
-                }
-
-                completionHandler(response.results, nil)
-            } catch let e as DecodingError {
-                completionHandler(nil, .decodingError(e))
-            } catch {
-                completionHandler(nil, .error(error))
+                return completionHandler(nil, .invalidJSON)
             }
 
+            guard let totalPages = response.totalPages, let results = response.results else {
+                completionHandler(nil, .invalidJSON)
+                return
+            }
 
-        }.resume()
+            if totalPages > 1 {
+                let r: CountableClosedRange<Int> = 2...totalPages
+                return strongSelf.loadAll(items: results, range: r, completionHandler: completionHandler)
+            }
+
+            completionHandler(response.results, nil)
+        }
+
 
     }
+
 
 }
 
@@ -719,7 +694,6 @@ private extension SbxCoreService {
 
         if let q = query {
             clientReq.httpBody = try? JSONSerialization.data(withJSONObject: q)
-            print(String(data: clientReq.httpBody!, encoding: .utf8)!)
         }
 
 
@@ -746,9 +720,6 @@ private extension SbxCoreService {
         headers.forEach {
             clientReq.addValue($1, forHTTPHeaderField: $0)
         }
-
-        print(headers)
-        print(url)
 
         clientReq.httpMethod = method.rawValue
 

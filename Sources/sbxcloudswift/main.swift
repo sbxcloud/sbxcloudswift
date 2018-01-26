@@ -93,6 +93,7 @@ let sbx = SbxCoreService(domain: 96, appKey: "598c9de4-6ef5-11e6-8b77-86f30ca893
 sbx
         .find(model: "customer")
         .fetch(models: ["state", "country", "time_zone"])
+        .whereWith(keys: ["0103634b-1188-4f58-93c0-219f2842cb2b"])
         .loadAll { (page: [Customer]?, resError: JSONError?) in
 
             if let e = resError {
