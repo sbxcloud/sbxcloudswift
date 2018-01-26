@@ -247,6 +247,10 @@ public final class SBXQueryBuilder {
             "size": config.size
         ]
 
+        if !config.fetch.isEmpty {
+            json["fetch"] = config.fetch
+        }
+
         print(json)
         if let tmpGroups = groups {
 

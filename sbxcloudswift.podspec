@@ -8,7 +8,7 @@ Pod::Spec.new do |s|
   #
 
   s.name         = "sbxcloudswift"
-  s.version      = "0.5.4"
+  s.version      = "0.5.6"
   s.summary      = "Swift library for interacting with sbxcoud.com."
 
   # This description is used to generate tags and improve search results.
