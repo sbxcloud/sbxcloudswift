@@ -8,10 +8,32 @@ import Foundation
 
 public typealias JSONObject = [String: Any]
 
-public enum JSONError: Error {
+public enum JSONError: Error, CustomStringConvertible {
     case error(Error)
     case customError(String)
+    case decodingError(DecodingError)
     case invalidJSON
+
+    public var description: String {
+
+        switch self {
+        case let .error(error):
+            return error.localizedDescription
+        case let .customError(msg):
+            return msg
+        case .invalidJSON:
+            return "Invalid JSON"
+        case let .decodingError(e):
+            switch e {
+                case let .valueNotFound(type, context):
+                    return "Value not found => \( context.codingPath.last?.stringValue ?? "" )(\(type)): \n \(context.codingPath)"
+                default:
+                    return e.localizedDescription
+
+            }
+        }
+
+    }
 }
 
 
@@ -25,9 +47,9 @@ public protocol Find {
 
     var query: SBXQueryBuilder { get }
 
-    func load<T: Codable>(page: Int, completionHandler: @escaping ([T]?, Error?) -> ())
+    func loadPage<T>(page: Int, completionHandler: @escaping (FindPageResponse<T>?, JSONError?) -> ())
 
-    func loadAll<T: Codable>(completionHandler: @escaping ([T]?, Error?) -> ())
+    func loadAll<T: Codable>(completionHandler: @escaping ([T]?, JSONError?) -> ())
 
     func newGroupWithAnd() -> Find
 
@@ -106,6 +128,8 @@ public final class FindOperation: Find {
 
     public let query: SBXQueryBuilder
     let core: SbxCoreService
+
+    let session = URLSession.shared
 
 
     fileprivate init(core: SbxCoreService, model: String) {
@@ -297,60 +321,162 @@ public final class FindOperation: Find {
         return self
     }
 
-    // do the actual call??
-    public func load<T: Codable>(page: Int, completionHandler: @escaping ([T]?, Error?) -> ()) {
+    public func loadPage<T>(page: Int, completionHandler: @escaping (FindPageResponse<T>?, JSONError?) -> ()) {
+
+
         let req = core.buildRequest(query: self.set(page: page).query.compile(), params: nil, action: SBXAction.find, method: .POST)
-        URLSession.shared.dataTask(with: req) { (data: Data?, res: URLResponse?, e: Error?) in
+
+        //hold a reference
+        let strongSelf = self
+
+        let task = session.dataTask(with: req) { (data: Data?, res: URLResponse?, error: Error?) in
 
 
-            guard e == nil else {
-                return completionHandler(nil, e)
+            if let e = error {
+                print(e)
+                return completionHandler(nil, .error(e))
             }
 
-            let decoder = JSONDecoder()
+            guard let d = data else {
+                return completionHandler(nil, .customError("Invalid Response From Server"))
+            }
 
             do {
-                let items = try decoder.decode(FindResponse<T>.self, from: data!)
-                completionHandler(items.results, nil)
+
+                guard let jsonData = try strongSelf.parseResponse(data: d) else {
+                    return completionHandler(nil, .invalidJSON)
+                }
+
+                let decoder = JSONDecoder()
+                let objects = try decoder.decode(FindPageResponse<T>.self, from: jsonData)
+
+                return completionHandler(objects, nil)
+
             } catch {
-                completionHandler(nil, error)
+                completionHandler(nil, .error(error))
             }
 
-        }.resume()
+        }
+
+        task.resume()
     }
 
-    public func loadAll<T: Codable>(completionHandler: @escaping ([T]?, Error?) -> ()) {
+    private func parseResponse(data: Data) throws -> Data? {
 
+        var json = try JSONSerialization.jsonObject(with: data, options: []) as! JSONObject
+
+        guard let fResults = json["fetched_results"] as? JSONObject, let modelJSON = json["model"] as? [JSONObject] else {
+            throw JSONError.invalidJSON
+        }
+
+        let modelData = try JSONSerialization.data(withJSONObject: modelJSON)
+        let modelFields = try JSONDecoder().decode([FieldModel].self, from: modelData)
+
+        guard let items = json["results"] as? [JSONObject] else {
+            throw JSONError.invalidJSON
+        }
+
+
+        let jsonObjects = items.map { object in
+            return modelFields.reduce(object) { (obj, field) in
+                return bindFetched(field: field, obj: obj, fetchedObjects: fResults)
+            }
+        }
+
+        json["results"] = jsonObjects
+
+
+        print(json)
+
+        return try JSONSerialization.data(withJSONObject: json)
+    }
+
+    @discardableResult private func bindFetched(field: FieldModel, obj: JSONObject, fetchedObjects: JSONObject) -> JSONObject {
+
+        var obj = obj
+
+        if let type = field.referenceTypeName,
+           field.type == "REFERENCE",
+           let refKey = (obj[field.name] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           let f1 = fetchedObjects[type] as? [String: JSONObject],
+           var refObject = f1[refKey] {
+
+            if let subModel = field.referenceTypeModel {
+
+                for subField in Array(subModel.values) {
+
+                    if subField.type == "REFERENCE" {
+                        refObject = bindFetched(field: subField, obj: refObject, fetchedObjects: fetchedObjects)
+                    }
+
+                }
+
+            }
+
+            obj[field.name] = refObject
+        }
+
+        return obj
+    }
+
+    public func loadAll<T: Codable>(completionHandler: @escaping ([T]?, JSONError?) -> ()) {
+
+        let req = core.buildRequest(query: self.query.compile(), params: nil, action: SBXAction.find, method: .POST)
 
         let strongSelf = self
 
-
-        let req = core.buildRequest(query: self.query.compile(), params: nil, action: SBXAction.find, method: .POST)
-        URLSession.shared.dataTask(with: req) { (data: Data?, res: URLResponse?, e: Error?) in
+        session.dataTask(with: req) { (data: Data?, res: URLResponse?, error: Error?) in
 
 
-            guard e == nil else {
-                return completionHandler(nil, e)
+            if let e = error {
+                return completionHandler(nil, .error(e))
             }
 
             let decoder = JSONDecoder()
 
+            guard let d = data else {
+                return completionHandler(nil, .customError("Invalid Response From Server"))
+            }
+
 
             do {
-                let response: FindResponse<T> = try decoder.decode(FindResponse<T>.self, from: data!)
 
-                if response.totalPages > 1 {
-                    let r: CountableClosedRange<Int> = 2...response.totalPages
-                    return strongSelf.loadAll(items: response.results, range: r, completionHandler: completionHandler)
+                guard let jsonData = try strongSelf.parseResponse(data: d) else {
+                    return completionHandler(nil, .invalidJSON)
+                }
+
+
+                let response: FindPageResponse<T> = try decoder.decode(FindPageResponse<T>.self, from: jsonData)
+
+
+                if !response.success {
+
+                    if let msg = response.error {
+                        return completionHandler(nil, .customError(msg))
+                    }
+
+                    return completionHandler(nil, .invalidJSON)
+                }
+
+
+                guard let totalPages = response.totalPages, let results = response.results else {
+                    completionHandler(nil, .invalidJSON)
+                    return
+                }
+
+
+                if totalPages > 1 {
+
+                    let r: CountableClosedRange<Int> = 2...totalPages
+
+                    return strongSelf.loadAll(items: results, range: r, completionHandler: completionHandler)
                 }
 
                 completionHandler(response.results, nil)
+            } catch let e as DecodingError {
+                completionHandler(nil, .decodingError(e))
             } catch {
-                print(error)
-                Thread.callStackSymbols.forEach {
-                    print($0)
-                }
-                completionHandler(nil, error)
+                completionHandler(nil, .error(error))
             }
 
 
@@ -363,12 +489,12 @@ public final class FindOperation: Find {
 
 private extension FindOperation {
 
-    private func loadAll<T: Codable>(items: [T], range: CountableClosedRange<Int>, completionHandler: @escaping ([T]?, Error?) -> ()) {
+    private func loadAll<T: Codable>(items: [T], range: CountableClosedRange<Int>, completionHandler: @escaping ([T]?, JSONError?) -> ()) {
 
 
         var resultList = items
 
-        var errorBox: Error?
+        var errorBox: JSONError?
 
 
         let queue = DispatchQueue(label: "sbxcloud-pages", attributes: .concurrent)
@@ -383,19 +509,18 @@ private extension FindOperation {
 
             queue.async {
 
-                self.load(page: page, completionHandler: { (items: [T]?, error: Error?) in
+                self.loadPage(page: page, completionHandler: { (pageResult: FindPageResponse<T>?, error: Error?) in
 
                     defer{
                         pageGroup.leave()
                     }
 
-
                     print("Page: \(page) DONE")
 
                     if let e = error {
-                        errorBox = e
-                    } else {
-                        resultList.append(contentsOf: items!)
+                        return errorBox = .error(e)
+                    } else if let results = pageResult?.results {
+                        resultList.append(contentsOf: results)
                         print(resultList.count)
                     }
 
@@ -421,13 +546,14 @@ private extension FindOperation {
 }
 
 
-public struct FindResponse<T: Codable>: Codable {
+public struct FindPageResponse<T: Codable>: Codable {
+
 
     let success: Bool
     let error: String?
 
-    let results: [T]
-    let totalPages: Int
+    let results: [T]?
+    let totalPages: Int?
 
     enum CodingKeys: String, CodingKey {
         case success
@@ -501,7 +627,6 @@ public class CloudScriptRequest: SbxRequest {
         }
 
 
-
         self.task?.resume()
 
     }
@@ -554,7 +679,7 @@ public final class SbxCoreService {
 
     }
 
-    public func find(model: String) -> Find {
+    @discardableResult public func find(model: String) -> Find {
         return FindOperation(core: self, model: model)
     }
 
@@ -630,6 +755,29 @@ private extension SbxCoreService {
         return clientReq
 
     }
+
+}
+
+
+struct FieldModel: Codable {
+
+    let id: Int
+    let type: String
+    let name: String
+    let referenceTypeId: Int?
+    let referenceTypeName: String?
+    let referenceTypeModel: [String: FieldModel]?
+
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case type
+        case name
+        case referenceTypeId = "reference_type"
+        case referenceTypeName = "reference_type_name"
+        case referenceTypeModel = "reference_model"
+    }
+
 
 }
 

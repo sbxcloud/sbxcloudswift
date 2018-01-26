@@ -527,3 +527,4 @@ playground.xcworkspace
 ## compatibility with Xcode 8 and earlier (ignoring not required starting Xcode 9)
 
 ## compatibility with Xcode 3 and earlier (ignoring not required starting Xcode 4)
+/Sources/sbxcloudswift/main.swift
