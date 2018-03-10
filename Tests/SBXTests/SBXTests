@@ -1,7 +1,7 @@
 import XCTest
-@testable import sbxcloudswift
+@testable import SBX
 
-class sbxcloudswiftTests: XCTestCase {
+class SBXTests: XCTestCase {
     func testExample() {
         // This is an example of a functional test case.
         // Use XCTAssert and related functions to verify your tests produce the correct
@@ -18,7 +18,7 @@ class sbxcloudswiftTests: XCTestCase {
             })
             .addDisposableTo(bag)
         
-        XCTAssertEqual(sbxcloudswift().text, "Hello, World!")
+        XCTAssertEqual(SBX().text, "Hello, World!")
     }
 
 

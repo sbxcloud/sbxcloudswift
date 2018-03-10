@@ -7,7 +7,7 @@ Pod::Spec.new do |s|
   #  summary should be tweet-length, and the description more in depth.
   #
 
-  s.name         = "sbxcloudswift"
+  s.name         = "SBX"
   s.version      = "0.5.6"
   s.summary      = "Swift library for interacting with sbxcoud.com."
 

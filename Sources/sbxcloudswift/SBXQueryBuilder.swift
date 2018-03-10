@@ -252,7 +252,7 @@ public final class SBXQueryBuilder {
             json["fetch"] = config.fetch
         }
 
-        print(json)
+
         if let tmpGroups = groups {
 
             var groupList = [[String: Any]]()

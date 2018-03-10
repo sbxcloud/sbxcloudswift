@@ -8,15 +8,24 @@ import Foundation
 
 public typealias JSONObject = [String: Any]
 
-public enum JSONError: Error, CustomStringConvertible {
+public enum SBXError: Error, CustomStringConvertible {
     case error(Error)
     case customError(String)
     case decodingError(DecodingError)
     case invalidJSON
 
     public var description: String {
+        return extractDescription()
+    }
+
+
+    private func extractDescription() -> String {
 
         switch self {
+        case let .error(e as DecodingError):
+            return extractDecodingIssue(e: e)
+        case let .error(e as SBXError):
+            return e.extractDescription()
         case let .error(error):
             return error.localizedDescription
         case let .customError(msg):
@@ -24,19 +33,23 @@ public enum JSONError: Error, CustomStringConvertible {
         case .invalidJSON:
             return "Invalid JSON"
         case let .decodingError(e):
-            switch e {
-            case let .valueNotFound(type, context):
-                return "Value not found => \(context.codingPath.last?.stringValue ?? "")(\(type)): \n \(context.codingPath)"
-            case let .keyNotFound(key, context):
-                return "Key not found => \(context.codingPath.last?.stringValue ?? "")(\(key)): \n \(context.codingPath)"
-            case let .typeMismatch(type, context):
-                return "Key not found => \(context.codingPath.last?.stringValue ?? "")(\(type)): \n \(context.codingPath)"
-            default:
-                return e.localizedDescription
-
-            }
+            return extractDecodingIssue(e: e)
         }
 
+    }
+
+    private func extractDecodingIssue(e: DecodingError) -> String {
+        switch e {
+        case let .valueNotFound(value, context):
+            return "Value not found => '\(value)' in path: \(context.codingPath.last?.stringValue ?? "")\n\t \(context.codingPath)"
+        case let .keyNotFound(key, context):
+            return "Key not found => '\(key)' in path: \(context.codingPath.last?.stringValue ?? "")\n\t \(context.codingPath)"
+        case let .typeMismatch(type, context):
+            return "Type mismatch => '\(type)' in path: \(context.codingPath.last?.stringValue ?? "")\n\t \(context.codingPath)"
+        case let .dataCorrupted(context):
+            return "Data is corrupted in path \(context.codingPath.last?.stringValue ?? ""): \n\t \(context.codingPath)"
+
+        }
     }
 }
 
@@ -51,9 +64,9 @@ public protocol Find {
 
     var query: SBXQueryBuilder { get }
 
-    func loadPage<T>(page: Int, completionHandler: @escaping (FindPageResponse<T>?, JSONError?) -> ())
+    func loadPage<T>(page: Int, completionHandler: @escaping (FindPageResponse<T>?, SBXError?) -> ())
 
-    func loadAll<T: Codable>(completionHandler: @escaping ([T]?, JSONError?) -> ())
+    func loadAll<T: Codable>(completionHandler: @escaping ([T]?, SBXError?) -> ())
 
     func newGroupWithAnd() -> Find
 
@@ -325,7 +338,7 @@ public final class FindOperation: Find {
         return self
     }
 
-    public func loadPage<T>(page: Int, completionHandler: @escaping (FindPageResponse<T>?, JSONError?) -> ()) {
+    public func loadPage<T>(page: Int, completionHandler: @escaping (FindPageResponse<T>?, SBXError?) -> ()) {
 
 
         let req = core.buildRequest(query: self.set(page: page).query.compile(), params: nil, action: SBXAction.find, method: .POST)
@@ -349,13 +362,10 @@ public final class FindOperation: Find {
                 return completionHandler(nil, .customError("Invalid Response From Server"))
             }
 
-
             do {
                 guard let jsonData = try strongSelf.parseResponse(data: d) else {
                     return completionHandler(nil, .invalidJSON)
                 }
-
-                print("DATA OK?! \(String(data: jsonData, encoding: .utf8)!)")
 
                 let decoder = JSONDecoder()
                 let objects = try decoder.decode(FindPageResponse<T>.self, from: jsonData)
@@ -378,15 +388,19 @@ public final class FindOperation: Find {
 
         let fResults = json["fetched_results"] as? JSONObject ?? JSONObject()
 
+        guard let success = json["success"] as? Bool , success else{
+            return try JSONSerialization.data(withJSONObject: json)
+        }
+
         guard let modelJSON = json["model"] as? [JSONObject] else {
-            throw JSONError.invalidJSON
+            return try JSONSerialization.data(withJSONObject: json)
         }
 
         let modelData = try JSONSerialization.data(withJSONObject: modelJSON)
         let modelFields = try JSONDecoder().decode([FieldModel].self, from: modelData)
 
         guard let items = json["results"] as? [JSONObject] else {
-            throw JSONError.invalidJSON
+            return try JSONSerialization.data(withJSONObject: json)
         }
 
 
@@ -430,9 +444,9 @@ public final class FindOperation: Find {
         return obj
     }
 
-    public func loadAll<T: Codable>(completionHandler: @escaping ([T]?, JSONError?) -> ()) {
+    public func loadAll<T: Codable>(completionHandler: @escaping ([T]?, SBXError?) -> ()) {
 
-        self.loadPage(page: 1) { [weak self] (pageResponse: FindPageResponse<T>?, error: JSONError?) in
+        self.loadPage(page: 1) { [weak self] (pageResponse: FindPageResponse<T>?, error: SBXError?) in
 
 
             guard let response = pageResponse, let strongSelf = self else {
@@ -476,12 +490,12 @@ public final class FindOperation: Find {
 
 private extension FindOperation {
 
-    private func loadAll<T: Codable>(items: [T], range: CountableClosedRange<Int>, completionHandler: @escaping ([T]?, JSONError?) -> ()) {
+    private func loadAll<T: Codable>(items: [T], range: CountableClosedRange<Int>, completionHandler: @escaping ([T]?, SBXError?) -> ()) {
 
 
         var resultList = items
 
-        var errorBox: JSONError?
+        var errorBox: SBXError?
 
 
         let queue = DispatchQueue(label: "sbxcloud-pages", attributes: .concurrent)
@@ -489,8 +503,6 @@ private extension FindOperation {
 
 
         for page in range {
-
-            print("Page: \(page) START")
 
             pageGroup.enter()
 
@@ -502,28 +514,22 @@ private extension FindOperation {
                         pageGroup.leave()
                     }
 
-                    print("Page: \(page) DONE")
-
                     if let e = error {
                         return errorBox = .error(e)
                     } else if let results = pageResult?.results {
                         resultList.append(contentsOf: results)
-                        print(resultList.count)
                     }
 
-                    print("Page: \(page) FINISHED")
                 })
             }
 
 
         }
 
-        print("waiting for all pages")
+
         queue.async {
             pageGroup.wait()
-            print("DONE WITH ALL PAGES")
             completionHandler(resultList, errorBox)
-
         }
 
 
@@ -559,9 +565,9 @@ public class CloudScriptRequest<T: Codable>: SBXRequest {
     private let req: URLRequest
     private var isRunning = false
     private let session = URLSession(configuration: URLSessionConfiguration.default)
-    private let completionHandler: (T?, JSONError?) -> ()
+    private let completionHandler: (T?, SBXError?) -> ()
 
-    init(req: URLRequest, cb: @escaping (T?, JSONError?) -> ()) {
+    init(req: URLRequest, cb: @escaping (T?, SBXError?) -> ()) {
         self.req = req
         self.completionHandler = cb
     }
@@ -581,21 +587,17 @@ public class CloudScriptRequest<T: Codable>: SBXRequest {
             return
         }
 
-        print("CloudScript:RUN")
-
         self.isRunning = true
 
         self.task = session.dataTask(with: self.req) { [weak self]  (data: Data?, res: URLResponse?, e: Error?) in
 
-            print("CloudScript:DONE")
-
             if let error = e {
-                self?.completionHandler(nil, JSONError.error(error))
+                self?.completionHandler(nil, SBXError.error(error))
                 return
             }
 
             guard let d = data, let r = res as? HTTPURLResponse, r.statusCode == 200 else {
-                self?.completionHandler(nil, JSONError.customError("Invalid response from server)"))
+                self?.completionHandler(nil, SBXError.customError("Invalid response from server)"))
                 return
             }
 
@@ -606,7 +608,6 @@ public class CloudScriptRequest<T: Codable>: SBXRequest {
                 let tmp = try decoder.decode(T.self, from: d)
                 self?.completionHandler(tmp, nil)
             } catch {
-                print(error)
                 self?.completionHandler(nil, .error(error))
             }
 
@@ -646,7 +647,7 @@ public final class SBXCoreService {
     }
 
 
-    private static func checkErrors(res: URLResponse?, err: Error?) -> JSONError? {
+    private static func checkErrors(res: URLResponse?, err: Error?) -> SBXError? {
 
         if let e = err {
             return .error(e)
@@ -662,7 +663,7 @@ public final class SBXCoreService {
     }
 
 
-    public func doLogin(email: String, password: String, completionHandler: @escaping (SBXLoginResponse?, JSONError?) -> ()) {
+    public func doLogin(email: String, password: String, completionHandler: @escaping (SBXLoginResponse?, SBXError?) -> ()) {
 
         let body = [
             "login": email,
@@ -679,19 +680,14 @@ public final class SBXCoreService {
         let task = session.dataTask(with: req) { (data: Data?, res: URLResponse?, err: Error?) in
 
 
-
-
-
             if let e = SBXCoreService.checkErrors(res: res, err: err) {
-                return completionHandler(nil,e)
+                return completionHandler(nil, e)
             }
 
 
             guard let d = data else {
                 return completionHandler(nil, .customError("Invalid Response From Server"))
             }
-
-            print(String(data:d, encoding: .utf8))
 
 
             do {
@@ -732,7 +728,7 @@ public final class SBXCoreService {
     }
 
 
-    public func runCloudScriptWith<T: Decodable>(key: String, params: JSONObject, autoRun: Bool = true, callback: @escaping (T?, JSONError?) -> ()) -> CloudScriptRequest<T> {
+    public func runCloudScriptWith<T: Decodable>(key: String, params: JSONObject, autoRun: Bool = true, callback: @escaping (T?, SBXError?) -> ()) -> CloudScriptRequest<T> {
 
 
         let body: JSONObject = [
@@ -792,7 +788,6 @@ private extension SBXCoreService {
 
         if let q = query {
             clientReq.httpBody = try? JSONSerialization.data(withJSONObject: q)
-            print(String(data: clientReq.httpBody!, encoding: .utf8)!)
         }
 
 
@@ -821,7 +816,6 @@ private extension SBXCoreService {
         }
 
         clientReq.httpMethod = method.rawValue
-
 
 
         return clientReq

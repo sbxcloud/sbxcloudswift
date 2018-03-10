@@ -1,6 +1,6 @@
 import XCTest
-@testable import sbxcloudswiftTests
+@testable import SBXTests
 
 XCTMain([
-    testCase(sbxcloudswiftTests.allTests),
+    testCase(SBXTests.allTests),
 ])
