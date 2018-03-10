@@ -27,6 +27,10 @@ public enum JSONError: Error, CustomStringConvertible {
             switch e {
             case let .valueNotFound(type, context):
                 return "Value not found => \(context.codingPath.last?.stringValue ?? "")(\(type)): \n \(context.codingPath)"
+            case let .keyNotFound(key, context):
+                return "Key not found => \(context.codingPath.last?.stringValue ?? "")(\(key)): \n \(context.codingPath)"
+            case let .typeMismatch(type, context):
+                return "Key not found => \(context.codingPath.last?.stringValue ?? "")(\(type)): \n \(context.codingPath)"
             default:
                 return e.localizedDescription
 
@@ -127,12 +131,12 @@ public protocol Find {
 public final class FindOperation: Find {
 
     public let query: SBXQueryBuilder
-    let core: SbxCoreService
+    let core: SBXCoreService
 
     let session = URLSession.shared
 
 
-    fileprivate init(core: SbxCoreService, model: String) {
+    fileprivate init(core: SBXCoreService, model: String) {
         self.query = SBXQueryBuilder(action: .find, domain: core.domain, model: model, size: 250)
         self.core = core
     }
@@ -335,6 +339,12 @@ public final class FindOperation: Find {
                 return completionHandler(nil, .error(e))
             }
 
+            // we need the response code to be HTTP -> 200 (OK)
+            if let response = res as? HTTPURLResponse, response.statusCode != 200 {
+                return completionHandler(nil, .customError("Invalid Response code: \(response.statusCode)"))
+            }
+
+
             guard let d = data else {
                 return completionHandler(nil, .customError("Invalid Response From Server"))
             }
@@ -345,7 +355,7 @@ public final class FindOperation: Find {
                     return completionHandler(nil, .invalidJSON)
                 }
 
-                //print("DATA OK?! \(String(data:jsonData, encoding: .utf8)!)")
+                print("DATA OK?! \(String(data: jsonData, encoding: .utf8)!)")
 
                 let decoder = JSONDecoder()
                 let objects = try decoder.decode(FindPageResponse<T>.self, from: jsonData)
@@ -541,7 +551,7 @@ public struct FindPageResponse<T: Codable>: Codable {
 
 }
 
-public class CloudScriptRequest<T: Codable>: SbxRequest {
+public class CloudScriptRequest<T: Codable>: SBXRequest {
 
     public typealias ResponseType = Codable
 
@@ -616,13 +626,99 @@ public class CloudScriptRequest<T: Codable>: SbxRequest {
 }
 
 
-public final class SbxCoreService {
+public final class SBXCoreService {
 
     let domain: Int
     let appKey: String
     let url = "sbxcloud.com"
     let scheme = "https"
+
     private var token: String?
+
+    let sessionStatus: SessionStatus = .anonimous
+
+    private let session = URLSession.shared
+
+
+    enum SessionStatus {
+        case authenticated
+        case anonimous
+    }
+
+
+    private static func checkErrors(res: URLResponse?, err: Error?) -> JSONError? {
+
+        if let e = err {
+            return .error(e)
+        }
+
+        // we need the response code to be HTTP -> 200 (OK)
+        if let response = res as? HTTPURLResponse, response.statusCode != 200 {
+            return .customError("Invalid Response code: \(response.statusCode)")
+        }
+
+
+        return nil
+    }
+
+
+    public func doLogin(email: String, password: String, completionHandler: @escaping (SBXLoginResponse?, JSONError?) -> ()) {
+
+        let body = [
+            "login": email,
+            "password": password,
+            "domain": "\(self.domain)"
+        ]
+
+
+        let req = self.buildRequest(query: nil, params: body, action: SBXAction.userLogin, method: .GET)
+
+        let strongSelf = self
+
+
+        let task = session.dataTask(with: req) { (data: Data?, res: URLResponse?, err: Error?) in
+
+
+
+
+
+            if let e = SBXCoreService.checkErrors(res: res, err: err) {
+                return completionHandler(nil,e)
+            }
+
+
+            guard let d = data else {
+                return completionHandler(nil, .customError("Invalid Response From Server"))
+            }
+
+            print(String(data:d, encoding: .utf8))
+
+
+            do {
+
+                let decoder = JSONDecoder()
+                let loginResponse = try decoder.decode(SBXLoginResponse.self, from: d)
+
+                guard loginResponse.success, let token = loginResponse.token else {
+                    completionHandler(nil, .customError(loginResponse.error ?? "Invalid response"))
+                    return
+                }
+
+                strongSelf.setToken(token: token)
+                completionHandler(loginResponse, nil)
+
+
+            } catch let e as DecodingError {
+                completionHandler(nil, .decodingError(e))
+            } catch {
+                completionHandler(nil, .error(error))
+            }
+
+        }
+
+        task.resume()
+
+    }
 
 
     public init(domain: Int, appKey: String) {
@@ -630,7 +726,7 @@ public final class SbxCoreService {
         self.appKey = appKey
     }
 
-    @discardableResult public func setToken(token: String) -> SbxCoreService {
+    @discardableResult public func setToken(token: String) -> SBXCoreService {
         self.token = token
         return self
     }
@@ -664,7 +760,7 @@ public final class SbxCoreService {
 }
 
 
-public protocol SbxRequest {
+public protocol SBXRequest {
 
     associatedtype ResponseType
 
@@ -674,7 +770,7 @@ public protocol SbxRequest {
 }
 
 
-private extension SbxCoreService {
+private extension SBXCoreService {
 
     func buildRequest(query: JSONObject? = nil, params: [String: String]? = nil, action: SBXAction, method: HTTPMETHOD = .POST) -> URLRequest {
 
@@ -696,7 +792,6 @@ private extension SbxCoreService {
 
         if let q = query {
             clientReq.httpBody = try? JSONSerialization.data(withJSONObject: q)
-            print("BODY")
             print(String(data: clientReq.httpBody!, encoding: .utf8)!)
         }
 
@@ -726,6 +821,8 @@ private extension SbxCoreService {
         }
 
         clientReq.httpMethod = method.rawValue
+
+
 
         return clientReq
 

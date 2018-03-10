@@ -89,6 +89,7 @@ enum Operator: String {
 }
 
 enum SBXAction: String {
+    case userLogin = "/api/user/v1/login"
     case insert = "/api/data/v1/row/add"
     case delete = "/api/data/v1/row/delete"
     case find = "/api/data/v1/row/find"
