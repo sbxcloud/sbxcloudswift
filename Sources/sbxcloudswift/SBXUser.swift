@@ -57,3 +57,15 @@ public struct SBXDomainMemberShip: Codable {
     }
 
 }
+
+
+struct CloudScriptResponse<T:Codable>:Codable {
+    let response:CloudScriptResponseBody<T>?
+    let success:Bool
+    let error:String?
+}
+
+struct CloudScriptResponseBody<T:Codable>:Codable {
+    let body:T?
+}
+

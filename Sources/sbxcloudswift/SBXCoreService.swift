@@ -388,7 +388,7 @@ public final class FindOperation: Find {
 
         let fResults = json["fetched_results"] as? JSONObject ?? JSONObject()
 
-        guard let success = json["success"] as? Bool , success else{
+        guard let success = json["success"] as? Bool, success else {
             return try JSONSerialization.data(withJSONObject: json)
         }
 
@@ -565,7 +565,7 @@ public class CloudScriptRequest<T: Codable>: SBXRequest {
     private let req: URLRequest
     private var isRunning = false
     private let session = URLSession(configuration: URLSessionConfiguration.default)
-    private let completionHandler: (T?, SBXError?) -> ()
+    private let completionHandler:(T?, SBXError?) -> ()
 
     init(req: URLRequest, cb: @escaping (T?, SBXError?) -> ()) {
         self.req = req
@@ -589,15 +589,19 @@ public class CloudScriptRequest<T: Codable>: SBXRequest {
 
         self.isRunning = true
 
+        let strongSelf = self
+
         self.task = session.dataTask(with: self.req) { [weak self]  (data: Data?, res: URLResponse?, e: Error?) in
 
+
+
             if let error = e {
-                self?.completionHandler(nil, SBXError.error(error))
+                strongSelf.completionHandler(nil, SBXError.error(error))
                 return
             }
 
             guard let d = data, let r = res as? HTTPURLResponse, r.statusCode == 200 else {
-                self?.completionHandler(nil, SBXError.customError("Invalid response from server)"))
+                strongSelf.completionHandler(nil, SBXError.customError("Invalid response from server)"))
                 return
             }
 
@@ -605,10 +609,24 @@ public class CloudScriptRequest<T: Codable>: SBXRequest {
             do {
 
                 let decoder = JSONDecoder()
-                let tmp = try decoder.decode(T.self, from: d)
-                self?.completionHandler(tmp, nil)
+                let tmp: CloudScriptResponse<T> = try decoder.decode(CloudScriptResponse<T>.self, from: d)
+
+
+                if !tmp.success {
+                    let e: SBXError = tmp.error == nil ? .invalidJSON : .customError(tmp.error!)
+                    self?.completionHandler(nil, e)
+                    return
+                }
+
+                if let res = tmp.response, let body = res.body {
+                    strongSelf.completionHandler(body, nil)
+                    return
+                }
+
+                strongSelf.completionHandler(nil, .invalidJSON)
+
             } catch {
-                self?.completionHandler(nil, .error(error))
+                strongSelf.completionHandler(nil, .error(error))
             }
 
 
@@ -628,6 +646,8 @@ public class CloudScriptRequest<T: Codable>: SBXRequest {
 
 
 public final class SBXCoreService {
+
+
 
     let domain: Int
     let appKey: String
@@ -728,7 +748,7 @@ public final class SBXCoreService {
     }
 
 
-    public func runCloudScriptWith<T: Decodable>(key: String, params: JSONObject, autoRun: Bool = true, callback: @escaping (T?, SBXError?) -> ()) -> CloudScriptRequest<T> {
+    @discardableResult public func runCloudScriptWith<T: Decodable>(key: String, params: JSONObject, autoRun: Bool = true, callback: @escaping (T?, SBXError?) -> ()) -> CloudScriptRequest<T> {
 
 
         let body: JSONObject = [
@@ -738,7 +758,7 @@ public final class SBXCoreService {
 
         let req = self.buildRequest(query: body, params: nil, action: SBXAction.cloudscriptRun, method: .POST)
 
-        let csRequest = CloudScriptRequest(req: req, cb: callback)
+        let csRequest = CloudScriptRequest<T>(req: req, cb: callback)
 
         if autoRun {
             csRequest.send()
