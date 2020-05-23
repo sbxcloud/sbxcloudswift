@@ -5,6 +5,10 @@ import PackageDescription
 
 let package = Package(
         name: "SBX",
+        
+        products: [
+            .library(name: "SBX", targets: ["SBX"]),
+        ],
         dependencies: [
         ],
         targets: [
