@@ -847,12 +847,12 @@ private extension SBXCoreService {
 
 struct FieldModel: Codable {
 
-    let id: Int
-    let type: String
-    let name: String
-    let referenceTypeId: Int?
-    let referenceTypeName: String?
-    let referenceTypeModel: [String: FieldModel]?
+    public let id: Int
+    public let type: String
+    public let name: String
+    public let referenceTypeId: Int?
+    public let referenceTypeName: String?
+    public let referenceTypeModel: [String: FieldModel]?
 
 
     enum CodingKeys: String, CodingKey {

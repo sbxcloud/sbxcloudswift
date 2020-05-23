@@ -45,10 +45,10 @@ public enum Val: ExpressibleByStringLiteral,
 }
 
 struct Condition {
-    var andOr: AndOr
-    var field: String
-    var op: Operator
-    var val: Val
+    public var andOr: AndOr
+    public var field: String
+    public var op: Operator
+    public var val: Val
 
 
     init(andOr: AndOr = .and, field: String, op: Operator = .equal, value: Val) {
@@ -61,8 +61,8 @@ struct Condition {
 }
 
 struct ConditionGroup {
-    var andOr: AndOr = .or
-    var conditions = [Condition]()
+    public var andOr: AndOr = .or
+    public var conditions = [Condition]()
 
     init(andOr: AndOr) {
         self.andOr = andOr

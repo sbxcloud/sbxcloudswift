@@ -6,24 +6,24 @@ import Foundation
 
 
 public struct SBXLoginResponse:Codable {
-    let success:Bool
-    let token:String?
-    let user:SBXUser?
-    let error:String?
+    public let success:Bool
+    public let token:String?
+    public let user:SBXUser?
+    public let error:String?
 }
 
 
 public struct SBXUser: Codable {
 
-    let id: Int
-    let name: String
-    let code: String?
-    let email: String
-    let login: String
-    let role: String
-    let domainName: String
-    let domainId: Int
-    let memberOf: [SBXDomainMemberShip]
+    public let id: Int
+    public let name: String
+    public let code: String?
+    public let email: String
+    public let login: String
+    public let role: String
+    public let domainName: String
+    public let domainId: Int
+    public let memberOf: [SBXDomainMemberShip]
 
 
     enum CodingKeys: String, CodingKey {
@@ -42,11 +42,11 @@ public struct SBXUser: Codable {
 }
 
 public struct SBXDomainMemberShip: Codable {
-    let id: Int
-    let name: String
-    let displayName: String
-    let role: String
-    let homeKey: String?
+    public let id: Int
+    public let name: String
+    public let displayName: String
+    public let role: String
+    public let homeKey: String?
 
     enum CodingKeys: String, CodingKey {
         case id = "domain_id"
@@ -60,12 +60,12 @@ public struct SBXDomainMemberShip: Codable {
 
 
 struct CloudScriptResponse<T:Codable>:Codable {
-    let response:CloudScriptResponseBody<T>?
-    let success:Bool
-    let error:String?
+    public let response:CloudScriptResponseBody<T>?
+    public let success:Bool
+    public let error:String?
 }
 
 struct CloudScriptResponseBody<T:Codable>:Codable {
-    let body:T?
+    public let body:T?
 }
 
